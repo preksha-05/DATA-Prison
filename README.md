@@ -2,7 +2,7 @@
 
 **An interactive installation about surveillance, consent and data that cannot be taken back.**
 
-🌐 **[Enter Data Prison](https://preksha-05.github.io/DATA-Prison/)/** (best on a laptop or a large screen, camera optional)
+🌐 **[Enter Data Prison](https://preksha-05.github.io/DATA-Prison/)** (best on a laptop or a large screen, camera optional)
 
 ---
 
