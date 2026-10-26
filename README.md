@@ -2,7 +2,7 @@
 
 **An interactive installation about surveillance, consent and data that cannot be taken back.**
 
-🌐 **[Enter Data Prison](https://YOUR-USERNAME.github.io/YOUR-REPO-NAME/)** (best on a laptop or a large screen, camera optional)
+🌐 **[Enter Data Prison][https://YOUR-USERNAME.github.io/YOUR-REPO-NAME](https://preksha-05.github.io/DATA-Prison/)/** (best on a laptop or a large screen, camera optional)
 
 ---
 
@@ -42,55 +42,6 @@ The artwork *performs* surveillance; it does not *do* it.
 
 ---
 
-
-## Making the city permanent and shared (one-time setup)
-
-GitHub Pages only hosts files; it can't store anything. On its own, the site keeps the city **in each visitor's browser**: it stays there, but nobody else sees it.
-
-To make **one city that everyone adds to and that stays forever**, connect a free [Supabase](https://supabase.com) database (about 10 minutes):
-
-1. Create a free account at supabase.com → **New project** (any name, e.g. `data-prison`; pick the region closest to you, e.g. Mumbai).
-2. Open **SQL Editor**, paste this, and click **Run**:
-
-   ```sql
-   create table buildings (
-     id text primary key,
-     rec jsonb not null,
-     updated_at timestamptz not null default now()
-   );
-   create function touch() returns trigger language plpgsql as $$
-   begin new.updated_at = now(); return new; end $$;
-   create trigger touch before update on buildings
-     for each row execute function touch();
-
-   alter table buildings enable row level security;
-   create policy "anyone can see the city"   on buildings for select using (true);
-   create policy "anyone can add a building" on buildings for insert with check (true);
-   create policy "buildings can grow"        on buildings for update using (true) with check (true);
-   -- no delete policy: nothing can be removed from the city through the website
-   ```
-
-3. Go to **Project Settings → API Keys** and copy the **publishable key** (starts with `sb_publishable_`; the older `anon` key also works). Then copy the **Project URL** (`https://xxxx.supabase.co`) from the project's **Connect** dialog or **Settings → Data API**.
-4. In `index.html`, find this line near the top of the script and paste the two values in:
-
-   ```js
-   const SHARED={url:'https://xxxx.supabase.co',key:'sb_publishable_xxxxxxxx'};
-   ```
-
-5. Upload the changed `index.html` to GitHub. Press `A` on the site: it should say **CITY: SHARED**.
-
-These two values are meant to be public; it's safe for them to be in the page. The database rules above let visitors add buildings and make them grow, but never delete anything.
-
-### How the data stays
-
-- **Every building is saved in two places:** the visitor's browser (instantly) and the shared database.
-- **Offline or flaky Wi-Fi at an exhibition?** New buildings wait on the device and upload automatically when the connection returns. The admin panel (`A`) shows how many are waiting.
-- **Older buildings carry over.** If a browser already had a city from before the database was connected, its real buildings are uploaded the first time it opens the new version. The simulated starter buildings are not uploaded.
-- **Updating the website on GitHub never touches the city.** The city lives in the database, not in the files.
-- **Supabase free plan:** a project is paused after about a week with no activity. Nothing is lost; open the Supabase dashboard and click **Restore** (possible for up to a year). Opening the site every few days keeps it awake.
-- **Clear this device** in the admin panel only clears that one screen's copy. The shared city cannot be wiped from the website.
-
----
 
 ## Built with
 
