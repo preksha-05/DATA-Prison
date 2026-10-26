@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>DATA PRISON</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+html,body{height:100%;margin:0;background:#050608;color:#e8e6df;overflow:hidden;font-family:"Helvetica Neue",Arial,sans-serif;user-select:none}
+canvas{display:block}
+#ov{position:fixed;inset:0;pointer-events:none;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+#main{position:absolute;left:4vw;bottom:7vh;max-width:88vw}
+#t{font-size:clamp(34px,7.6vw,140px);font-weight:700;line-height:.93;letter-spacing:-.03em;text-transform:uppercase;white-space:pre-line;animation:in .9s ease both}
+#s{font-size:clamp(14px,1.7vw,30px);color:#8b8d92;max-width:44em;margin-top:2vh;line-height:1.35;white-space:pre-line}
+#b{margin-top:3.5vh}
+button{pointer-events:auto;background:none;border:0;border-bottom:2px solid #e8e6df;color:#e8e6df;font:600 clamp(16px,2.6vw,46px)/1.2 inherit;font-family:inherit;text-transform:uppercase;padding:.15em 0;margin:0 3vw 1vh 0;cursor:pointer;letter-spacing:-.01em}
+button:hover{color:#e0392d;border-color:#e0392d}button.dim{color:#6d6f73;border-color:#44464a;font-size:clamp(12px,1.4vw,24px)}
+@keyframes in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+#bar{position:absolute;left:0;top:0;height:3px;background:#e8e6df;width:0}
+#hint{position:absolute;right:3vw;bottom:3vh;font-size:clamp(10px,1vw,16px);letter-spacing:.14em;color:#55575b;text-align:right;text-transform:uppercase;white-space:pre-line}
+#tick span{position:absolute;font:10px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:#7d8a92;animation:fd 4.5s linear forwards}
+@keyframes fd{0%{opacity:0}15%{opacity:.5}100%{opacity:0}}
+#x{position:absolute;display:none;pointer-events:auto;font-size:30px;line-height:1;color:#c9c7c0;cursor:pointer;padding:14px;transform:translate(-50%,-50%);opacity:.7}
+#x:hover{opacity:1;color:#e0392d}
+#insp{position:absolute;left:4vw;top:6vh;font:clamp(11px,1.15vw,19px)/1.55 ui-monospace,Menlo,monospace;color:#c9c7c0;display:none;max-width:34vw;text-transform:uppercase;letter-spacing:.05em}
+#insp img{width:64px;height:64px;margin:2px 2px 2px 0}#insp b{color:#fff}#insp canvas{width:96px;height:96px;image-rendering:pixelated;margin:8px 0}
+#note{position:absolute;left:4vw;top:5vh;font-size:clamp(10px,1.1vw,17px);color:#8b8d92;letter-spacing:.06em;text-transform:uppercase;max-width:40em}
+#cam{position:absolute;right:3vw;top:4vh;width:15vw;transform:scaleX(-1);display:none;opacity:.8;filter:grayscale(1)}
+#adm{position:absolute;right:3vw;top:4vh;display:none;text-align:right}
+#gc{position:fixed;left:0;top:0;width:72px;height:72px;margin:-36px 0 0 -36px;border:2px solid rgba(255,255,255,.9);border-radius:50%;pointer-events:none;z-index:50;display:none;opacity:0;transition:opacity .25s;mix-blend-mode:difference}#gc i{position:absolute;inset:0;border-radius:50%;background:#fff;opacity:.55;transform:scale(0)}
+</style></head><body>
+<div id="ov">
+ <div id="bar"></div><div id="tick"></div><div id="note"></div>
+ <video id="cam" autoplay muted playsinline></video>
+ <div id="insp"></div><div id="x">×</div>
+ <div id="adm"><div id="sync" style="font-size:12px;letter-spacing:.12em;color:#8b8d92;margin-bottom:1vh"></div><button class="dim" id="aClr">Clear this device</button><br><button class="dim" id="aFs">Fullscreen (F)</button><br><button class="dim" id="aHint">Toggle hints (H)</button></div>
+ <div id="main"><div id="t"></div><div id="s"></div><div id="b"></div></div>
+ <div id="hint"></div><div id="gc"><i></i></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const COL=[0xb23a2e,0xc9772a,0xc9aa2e,0x3f8f4a,0x35599e,0x6b3f98,0x3f9aa8];
+const N=40,DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const rs=()=>Math.random()*1e9|0;
+// surveillance-frame seeds are NEGATIVE numbers: -(base*16+tag). tag says which moment of the visit the frame was taken at
+const fr=t=>-((1+rs()%1e8)*16+t),frR=(r,t)=>-((1+(r()*1e8|0))*16+t);
+// ---- SessionStore: swap load/save for fetch() to share one city across screens ----
+const KEY='dataprison.city.v3';
+let idb=null;const idbReq=r=>new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+const idbReady=new Promise(res=>{try{const o=indexedDB.open('dataprison',1);o.onupgradeneeded=()=>o.result.createObjectStore('p');o.onsuccess=()=>{idb=o.result;res(idb)};o.onerror=()=>res(null)}catch(e){res(null)}});
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}// ask the browser never to evict this data
+const idbGet=k=>idbReady.then(d=>d?idbReq(d.transaction('p').objectStore('p').get(k)):null).catch(()=>null);
+const idbPut=(k,v)=>idbReady.then(d=>d&&idbReq(d.transaction('p','readwrite').objectStore('p').put(v,k))).catch(()=>{});
+const idbDel=k=>idbReady.then(d=>d&&idbReq(d.transaction('p','readwrite').objectStore('p').delete(k))).catch(()=>{});
+const idbClear=()=>idbReady.then(d=>d&&idbReq(d.transaction('p','readwrite').objectStore('p').clear())).catch(()=>{});
+const hashS=s=>{let a=0x811c9dc5,b=0x1234567;for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);a=Math.imul(a^c,16777619);b=Math.imul(b+c,2246822519)^(b>>>13)}return(a>>>0).toString(36)+(b>>>0).toString(36)+s.length.toString(36)};
+const photoKey=s=>s.startsWith('idb:')?s.slice(4):hashS(s);
+const Store={load(){try{return JSON.parse(localStorage.getItem(KEY))||[]}catch(e){return[]}},
+ save(a){const j=JSON.stringify(a,(k,v)=>{if(idb&&typeof v==='string'&&v.startsWith('data:image')){const h=hashS(v);idbPut(h,v);return 'idb:'+h}return v});try{localStorage.setItem(KEY,j)}catch(e){console.warn('city record could not be saved',e)}}};
+// ---- SHARED CITY (optional) --------------------------------------------------------------
+// Paste your Supabase project URL and anon/public key to make one permanent city shared by every
+// visitor, on every device. Leave both empty and the city is kept in this browser only.
+const SHARED={url:'',key:''};
+// Real photos never leave the device that took them: the shared copy carries generated frames in their place.
+const PEND='dataprison.pending';
+const pubCopy=rec=>JSON.parse(JSON.stringify(rec,(k,v)=>typeof v==='string'&&(v.startsWith('data:image')||v.startsWith('idb:'))?-(((parseInt(hashS(v).slice(0,6),36)%1e8)+1)*16+3):v));
+const hasPhotos=rec=>rec.layout.some(c=>c.k.f.some(f=>typeof f==='string'));
+const Remote=SHARED.url&&SHARED.key?(()=>{const base=SHARED.url.replace(/\/+$/,'')+'/rest/v1/buildings',h=Object.assign({apikey:SHARED.key,'Content-Type':'application/json'},SHARED.key.startsWith('eyJ')?{Authorization:'Bearer '+SHARED.key}:{});// new sb_publishable_ keys go in apikey only; legacy anon JWTs also as Bearer
+ const go=async(u,o)=>{const r=await fetch(u,Object.assign({headers:h},o));if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,200));return r};
+ return{since:'',ok:null,
+  async pull(){const out=[];for(;;){const q=base+'?select=rec,updated_at&order=updated_at.asc&limit=1000'+(this.since?'&updated_at=gt.'+encodeURIComponent(this.since):'');const rows=await(await go(q)).json();if(rows.length)this.since=rows[rows.length-1].updated_at;out.push(...rows);if(rows.length<1000)break}this.ok=true;return out.map(x=>x.rec).filter(x=>x&&x.id&&Array.isArray(x.layout))},
+  async push(recs){await go(base+'?on_conflict=id',{method:'POST',headers:Object.assign({},h,{Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(recs.map(rec=>({id:rec.id,rec:pubCopy(rec)})))})}}})():null;
+const pending=()=>{try{return JSON.parse(localStorage.getItem(PEND))||[]}catch(e){return[]}},setPending=a=>{try{localStorage.setItem(PEND,JSON.stringify(a))}catch(e){}};
+// save one building everywhere: this browser now, the shared city as soon as it can be reached (queued while offline)
+function putRec(rec){Store.save(city);if(!Remote)return;const p=pending();if(!p.includes(rec.id)){p.push(rec.id);setPending(p)}flush()}
+let flushing=false;async function flush(){if(!Remote||flushing)return;flushing=true;try{const ids=pending().slice(0,50);if(ids.length){await Remote.push(city.filter(r=>ids.includes(r.id)));setPending(pending().filter(x=>!ids.includes(x)));if(pending().length){flushing=false;return flush()}}}catch(e){Remote.ok=false;console.warn('shared city unreachable; will retry',e)}flushing=false;status()}
+function status(){const s=$('sync');if(s)s.textContent=!Remote?'CITY: THIS DEVICE ONLY':Remote.ok===null?'CITY: CONNECTING…':Remote.ok?'CITY: SHARED · '+city.length+' BUILDINGS'+(pending().length?' · '+pending().length+' WAITING':''):'CITY: OFFLINE · '+pending().length+' WAITING'}
+// bring in buildings from everyone else. A building this device holds real photos for keeps its local copy.
+const canon=v=>JSON.stringify(v,(k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.keys(x).sort().reduce((o,q)=>(o[q]=x[q],o),{}):x);
+function merge(recs){let ch=false;const at=new Map(city.map((c,i)=>[c.id,i]));recs.forEach(rr=>{const i=at.get(rr.id);
+  if(i===undefined){at.set(rr.id,city.length);city.push(rr);addB(rr);ch=true}
+  else if(!hasPhotos(city[i])&&canon(city[i])!==canon(rr)){if(sess&&sess.rec&&sess.rec.id===rr.id)sess.rec=rr;city[i]=rr;addB(rr);ch=true}});
+ if(ch){city.sort((a,b)=>a.t-b.t);rebuildLinks();Store.save(city)}return ch}
+let synced=false,syncing=false;
+async function sync(){if(!Remote||syncing)return;syncing=true;try{const recs=await Remote.pull();
+  if(!synced){synced=true;
+   // first contact: old buildings saved in this browser join the shared city (simulated seed people do not)
+   const ids=new Set(recs.map(r=>r.id)),p=pending();city.forEach(r=>{if(!r.sim&&!ids.has(r.id)&&!p.includes(r.id))p.push(r.id)});setPending(p);
+   const real=city.filter(r=>!r.sim);city.forEach(r=>{if(B[r.id]){scene.remove(B[r.id].g);delete B[r.id]}});city=real;real.forEach(r=>addB(r));
+   if(!recs.length&&!city.length){seedCity();city.forEach(r=>{addB(r);p.push(r.id)});setPending(p)}}
+  merge(recs);rebuildLinks();Store.save(city)}catch(e){Remote.ok=false;console.warn('shared city unreachable',e);if(!synced&&!city.length){seedCity();city.forEach(r=>addB(r));rebuildLinks()}}
+ syncing=false;await flush();status()}
+let city=Store.load();
+// ---- three ----
+const PR=()=>Math.min(Math.max(window.devicePixelRatio||1,2),3);// always render at least 2x, so edges and textures stay crisp even on 1x screens
+const R=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});R.setPixelRatio(PR());R.setSize(innerWidth,innerHeight);document.body.prepend(R.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x050608);scene.fog=new THREE.FogExp2(0x050608,.004);
+const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,300);
+scene.add(new THREE.HemisphereLight(0x8899aa,0x111114,.6));
+const grid=new THREE.GridHelper(N*2,N*2,0x2a2d33,0x15171b);scene.add(grid);
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(400,400).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0x07080a}));gnd.position.y=-.01;scene.add(gnd);
+// ---- images on cube faces. Real photos only exist if the participant said YES; every other frame is a generated stand-in ----
+const TAGS=['RECOGNISED','READING CONSENT','HESITATING','TASK 1','TASK 2','TASK 3','TASK 4','TASK 5'];
+const tagOf=s=>s<0&&(-s)%16<8?TAGS[(-s)%16]:'BACKGROUND';
+function synth(seed,k,px=256){const size=128,neg=seed<0,a=Math.abs(seed),tg=neg?a%16:-1,r=rng(neg?(a/16|0):a),c=document.createElement('canvas');c.width=c.height=px;const g=c.getContext('2d'),hu=k?195:30;g.scale(px/size,px/size);
+ g.fillStyle='hsl('+hu+',14%,'+(6+r()*7)+'%)';g.fillRect(0,0,size,size);
+ const hz=size*(.52+r()*.1),gr=g.createLinearGradient(0,0,0,size);gr.addColorStop(0,'hsla('+hu+',25%,40%,.5)');gr.addColorStop(hz/size,'hsla('+hu+',20%,18%,.15)');gr.addColorStop(1,'rgba(0,0,0,.45)');g.fillStyle=gr;g.fillRect(0,0,size,size);
+ g.strokeStyle='rgba(255,255,255,.08)';g.lineWidth=1;g.beginPath();g.moveTo(0,hz);g.lineTo(size,hz);for(let i=-4;i<=4;i++){g.moveTo(size/2+i*5,hz);g.lineTo(size/2+i*size*.2,size)}g.stroke();
+ // a full-body figure caught on a fixed camera (not a profile icon); distance and pose depend on the moment it was taken
+ const SC=[.5,.85,1,1,1.1,1,.95,.9],sc=tg>=0&&tg<8?SC[tg]*(.9+r()*.2):.55+r()*.6,fh=size*.62*sc,fx=size*(.3+r()*.4),ft=hz+size*.3*sc,hy=ft-fh*.9,st=(r()-.5)*fh*.22;
+ g.fillStyle=g.strokeStyle='rgba(5,6,8,.92)';g.lineCap='round';g.beginPath();g.arc(fx,hy,fh*.075,0,7);g.fill();
+ g.beginPath();g.moveTo(fx-fh*.11,ft-fh*.8);g.lineTo(fx+fh*.11,ft-fh*.8);g.lineTo(fx+fh*.08,ft-fh*.45);g.lineTo(fx-fh*.08,ft-fh*.45);g.fill();
+ g.lineWidth=fh*.06;g.beginPath();g.moveTo(fx-fh*.04,ft-fh*.45);g.lineTo(fx-fh*.04-st,ft);g.moveTo(fx+fh*.04,ft-fh*.45);g.lineTo(fx+fh*.04+st,ft);
+ const up=tg===4;g.moveTo(fx-fh*.11,ft-fh*.78);g.lineTo(fx-fh*.15-st*.5,ft-fh*.5);g.moveTo(fx+fh*.11,ft-fh*.78);g.lineTo(up?fx+fh*.16:fx+fh*.15+st*.5,up?ft-fh*1.0:ft-fh*.5);g.stroke();
+ g.strokeStyle='rgba(255,255,255,.75)';g.lineWidth=1.5;const bx=fx-fh*.24,by=hy-fh*.12,bw=fh*.48,bh=ft-by+fh*.03,L=(x,y,dx,dy)=>{g.beginPath();g.moveTo(x+dx*10,y);g.lineTo(x,y);g.lineTo(x,y+dy*10);g.stroke()};L(bx,by,1,1);L(bx+bw,by,-1,1);L(bx,by+bh,1,-1);L(bx+bw,by+bh,-1,-1);
+ g.fillStyle='rgba(255,255,255,.85)';g.font='7px monospace';g.fillText('SUBJ '+(a%65536).toString(16).toUpperCase().padStart(4,'0'),Math.max(10,Math.min(size-52,bx)),Math.max(26,by-3));
+ for(let y=0;y<size;y+=3){g.fillStyle='rgba(0,0,0,.2)';g.fillRect(0,y,size,1)}
+ for(let i=0;i<120;i++){g.fillStyle='rgba(255,255,255,'+r()*.12+')';g.fillRect(r()*size,r()*size,1.5,1.5)}
+ g.fillStyle='rgba(255,255,255,.8)';g.fillText('CAM '+(1+a%9)+' · SIM',10,18);g.fillText(tagOf(seed),10,size-12);
+ g.fillStyle='#e0392d';g.beginPath();g.arc(size-14,15,3,0,7);g.fill();
+ g.lineWidth=7;g.strokeStyle=k?'#bfefff':'#ffb25e';g.strokeRect(3.5,3.5,size-7,size-7);return c}
+const FM=new Map();
+function faceMat(src,k){const key=(typeof src==='number'?'s'+src:src)+'|'+k;let m=FM.get(key);if(m)return m;let cv,tex;
+ if(typeof src==='number')cv=synth(src,k);else{cv=document.createElement('canvas');cv.width=cv.height=256;const g=cv.getContext('2d');g.fillStyle='#111';g.fillRect(0,0,256,256);const im=new Image();im.onload=()=>{g.drawImage(im,0,0,256,256);g.lineWidth=14;g.strokeStyle='#bfefff';g.strokeRect(7,7,242,242);tex.needsUpdate=true};if(src.startsWith('idb:'))idbGet(src.slice(4)).then(u=>{if(u)im.src=u});else im.src=src}
+ tex=new THREE.CanvasTexture(cv);tex.generateMipmaps=true;tex.minFilter=THREE.LinearMipmapLinearFilter;tex.magFilter=THREE.LinearFilter;tex.anisotropy=R.capabilities.getMaxAnisotropy();m=new THREE.MeshBasicMaterial({map:tex,color:0xd6d6d6});FM.set(key,m);return m}
+const CUBE=new THREE.BoxGeometry(.92,.92,.92),EDGE=new THREE.EdgesGeometry(new THREE.BoxGeometry(.92,.92,.92)),EM={};
+const edgeMat=c=>EM[c]||(EM[c]=new THREE.LineBasicMaterial({color:COL[c]}));
+function mkCube(c){const mats=[0,1,2,3,4,5].map(i=>faceMat(c.f[i%c.f.length],c.k));const m=new THREE.Mesh(CUBE,mats);const e=new THREE.LineSegments(EDGE,edgeMat(c.c));e.scale.setScalar(1.09);m.add(e);return m}
+const kOf=f=>f.every(x=>typeof x==='string')?1:0;
+// ---- BuildingGenerator ----
+const B={};const links=new THREE.Group();scene.add(links);let pulses=[],cityShown=false;
+function layout(cubes,gx,gz,seed,o){const r=rng(seed);let cur=[[gx,gz]];o.add(gx+','+gz);const out=[];let i=0,f=0;
+ const ext=()=>{const p=cur[r()*cur.length|0],d=DIRS[r()*4|0],x=p[0]+d[0],z=p[1]+d[1];if(cur.length<6&&valid(x,z,o)&&!cur.some(c=>c[0]==x&&c[1]==z)){cur.push([x,z]);o.add(x+','+z)}};
+ for(let j=0;j<1+(r()*3|0);j++)ext();
+ while(i<cubes.length){if(f>0){const q=r();if(q<.45)ext();else if(q<.7&&cur.length>2)cur.splice(r()*cur.length|0,1)}
+  for(const [x,z] of cur){if(i>=cubes.length)break;out.push({x,z,f,k:cubes[i++]})}f++}
+ return out}
+const floorsOf=rec=>Math.max(...rec.layout.map(c=>c.f))+1;
+function makeB(rec,from,t0){const g=new THREE.Group();g.userData.ms=[];
+ rec.layout.forEach((c,i)=>{const m=mkCube(c.k);m.position.set(c.x+.5,c.f+.5,c.z+.5);m.userData={bid:rec.id,k:c.k,fy:c.f+.5,at:i<from?-9:t0+(i-from)*.14};g.add(m);g.userData.ms.push(m)});
+ g.userData.until=t0+(rec.layout.length-from)*.14+1;g.visible=cityShown;return g}
+function addB(rec,from=0,t0=-9){if(B[rec.id])scene.remove(B[rec.id].g);const g=makeB(rec,from,t0);scene.add(g);B[rec.id]={rec,g}}
+function cityVis(v){cityShown=v;links.visible=v;Object.values(B).forEach(b=>b.g.visible=v)}
+function anchor(rec){const c=rec.layout[0];return new THREE.Vector3(c.x+.5,Math.min(floorsOf(rec),9)*.9,c.z+.5)}
+const d2=(a,b)=>(a.layout[0].x-b.layout[0].x)**2+(a.layout[0].z-b.layout[0].z)**2;
+function rebuildLinks(){while(links.children.length)links.remove(links.children[0]);pulses=[];const lm=new THREE.LineBasicMaterial({color:0x6a7580,transparent:true,opacity:.35});
+ city.forEach((a,i)=>{if(i<1)return;const prev=city.slice(0,i).sort((p,q)=>d2(a,p)-d2(a,q));const tg=[prev[0]];if(i>3)tg.push(prev[1]);
+  tg.forEach(b=>{const p=anchor(a),q=anchor(b),m=p.clone().add(q).multiplyScalar(.5);m.y+=4+p.distanceTo(q)*.15;const cv=new THREE.QuadraticBezierCurve3(p,m,q);
+   links.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cv.getPoints(24)),lm));pulses.push({cv,t:Math.random(),v:.05+Math.random()*.06})})});
+ const geo=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(new Float32Array(pulses.length*3),3));
+ const pts=new THREE.Points(geo,new THREE.PointsMaterial({color:0xe8e6df,size:.22}));pts.frustumCulled=false;links.add(pts)}
+const occ=()=>{const s=new Set();city.forEach(b=>b.layout.forEach(c=>s.add(c.x+','+c.z)));return s};
+function valid(gx,gz,o){o=o||occ();return gx>=-N&&gx<N&&gz>=-N&&gz<N&&!o.has(gx+','+gz)}
+function free(){const o=occ();for(let r=0;r<N*2+2;r++)for(let a=-r;a<=r;a++)for(let b=-r;b<=r;b++)if(Math.max(Math.abs(a),Math.abs(b))==r&&valid(a,b,o))return[a,b];return[0,0]}
+// ---- stage: the empty cube, then one cube per task ----
+const stage=new THREE.Group();scene.add(stage);
+const WIRE=new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1));
+// the landing cube: an invisible depth-writing solid hides the back edges, so it always reads as a cube; spin is about the vertical axis only, with a fixed tilt
+const empty=new THREE.Group();empty.scale.setScalar(4);empty.position.y=2.6;empty.rotation.order='YXZ';empty.rotation.x=.3;
+const emptyOcc=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({colorWrite:false,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1}));
+const emptyGlass=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({color:0x9fb4c4,transparent:true,opacity:.05,depthWrite:false}));
+const emptyBack=new THREE.LineSegments(WIRE,new THREE.LineBasicMaterial({color:0xe8e6df,transparent:true,opacity:.16,depthTest:false}));
+const emptyF=new THREE.LineSegments(WIRE,new THREE.LineBasicMaterial({color:0xe8e6df,transparent:true}));
+emptyBack.renderOrder=1;emptyF.renderOrder=2;empty.add(emptyOcc,emptyGlass,emptyBack,emptyF);stage.add(empty);
+const emptyL=new THREE.PointLight(0xffffff,1,18);emptyL.position.y=2.6;stage.add(emptyL);
+const slots=[0,1,2,3,4].map(i=>{const s=new THREE.LineSegments(WIRE,new THREE.LineBasicMaterial({color:COL[i],transparent:true,opacity:.3}));s.scale.setScalar(2.2);s.position.set((i-2)*2.8,1.3,0);s.visible=false;stage.add(s);return s});
+let taskMs=[];
+// ---- camera ----
+const cam={az:.8,el:.55,d:32,t:new THREE.Vector3()},goal={az:.8,el:.55,d:32,t:new THREE.Vector3()};
+function stepCam(dt){const k=1-Math.exp(-dt*3);const tf=(state==='ATTRACT'||state==='ASK')?28:48;camera.fov+=(tf-camera.fov)*k;camera.updateProjectionMatrix();cam.az+=(goal.az-cam.az)*k;cam.el+=(goal.el-cam.el)*k;cam.d+=(goal.d-cam.d)*k;cam.t.lerp(goal.t,k);
+ camera.position.set(cam.t.x+cam.d*Math.cos(cam.el)*Math.sin(cam.az),cam.t.y+cam.d*Math.sin(cam.el),cam.t.z+cam.d*Math.cos(cam.el)*Math.cos(cam.az));camera.lookAt(cam.t)}
+// ---- UI helpers ----
+function ui(t,s,btns){const e=$('t');e.style.animation='none';void e.offsetWidth;e.style.animation='';e.textContent=t;$('s').textContent=s||'';const b=$('b');b.innerHTML='';(btns||[]).forEach(([l,f,dim])=>{const x=document.createElement('button');x.textContent=l;if(dim)x.className='dim';x.onclick=ev=>{ev.stopPropagation();f()};b.appendChild(x)})}
+let hintsOn=true,hintTxt='';function hint(t){hintTxt=t;$('hint').textContent=hintsOn?t:''}
+function note(t){$('note').innerHTML=t||''}
+// ---- camera (explicit opt-in only) ----
+let stream=null;
+async function camOn(){if(GM.on&&GM.stream){stream=GM.stream;$('cam').srcObject=stream;$('cam').style.display='block';return true}try{stream=await navigator.mediaDevices.getUserMedia({video:true});$('cam').srcObject=stream;$('cam').style.display='block';return true}catch(e){stream=null;note('Camera unavailable.');return false}}
+function camOff(){if(stream&&stream!==GM.stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('cam').style.display='none'}
+function snap(){const v=$('cam');if(sess.real&&stream&&v.videoWidth){const c=document.createElement('canvas');c.width=c.height=256;const g=c.getContext('2d'),s=Math.min(v.videoWidth,v.videoHeight);g.translate(256,0);g.scale(-1,1);g.drawImage(v,(v.videoWidth-s)/2,(v.videoHeight-s)/2,s,s,0,0,256,256);return c.toDataURL('image/jpeg',.7)}return rs()}
+// ---- state machine ----
+let bgAcc=0,state='ATTRACT',sess=null,poseI=0,poseT=0,last=performance.now()/1e3,ghost=null,sel=null;
+const POSES=['LOOK DIRECTLY AT THE SYSTEM.','RAISE YOUR RIGHT HAND.','TURN YOUR BODY TO THE SIDE.','HOLD STILL.','NOW GIVE US YOUR BEST POSE.','RAISE BOTH HANDS.','SMILE.','LOOK AWAY.','COVER YOUR FACE.','STEP BACK.','CROSS YOUR ARMS.','TURN AROUND.','TILT YOUR HEAD.','CLOSE YOUR EYES.','POINT AT THE SYSTEM.'];
+const NT=5,SNAP_AT=[4.5,5.8,7.1],POSE_END=8.8;// 4.5 s to read and get into position, then three frames 1.3 s apart
+function draw5(){let prev=[];try{prev=JSON.parse(localStorage.getItem('dataprison.lastTasks'))||[]}catch(e){}
+ const sh=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a},all=POSES.map((_,i)=>i);
+ const pi=sh(sh(all.filter(i=>!prev.includes(i))).concat(sh(all.filter(i=>prev.includes(i)))).slice(0,NT));// prefer tasks the previous person did not get
+ try{localStorage.setItem('dataprison.lastTasks',JSON.stringify(pi))}catch(e){}return pi}
+const ATT=['STEP CLOSER.',"LET'S BUILD SOMETHING.",'YOUR PRESENCE CHANGES THIS CITY.'];
+function clearStage(){taskMs.forEach(m=>stage.remove(m));taskMs=[];slots.forEach(s=>s.visible=false)}
+function reset(){camOff();if(ghost){scene.remove(ghost);ghost=null}clearStage();stage.visible=true;empty.visible=emptyL.visible=true;cityVis(false);$('x').style.display='none';$('insp').style.display='none';$('bar').style.width=0;note('');sel=null;sess=null;state='ATTRACT';goal.d=26;goal.el=.3;goal.az=.5;goal.t.set(0,2.6,0);ui(ATT[0]);hint(GM.on?'WAVE A HAND TO BEGIN\nCAMERA ON · NOT RECORDED · G OFF':'TOUCH · CLICK · ANY KEY\nG GESTURES · R RESET · A ADMIN · F FULLSCREEN')}
+function ask(){state='ASK';bgAcc=0;sess={tasks:[],held:0,fr:[],real:false,consent:false,askT:0,bg:[fr(0)]};/* simulated capture begins the instant the visitor is recognised, before any consent */
+ ui('MAY WE\nCAPTURE YOU?','',[['Yes',async()=>{if(state!=='ASK')return;const ok=await camOn();sess.real=sess.consent=ok;startTasks()}],['No',()=>{sess.real=sess.consent=false;startTasks()}]]);hint('')}
+function startTasks(){state='POSE';poseI=0;poseT=0;sess.fr=[];sess.pi=draw5();empty.visible=emptyL.visible=false;slots.forEach(s=>s.visible=true);goal.az=0;goal.el=.18;goal.t.set(0,1.3,0);goal.d=Math.max(16,16*1.8/camera.aspect);showPose()}
+function showPose(){ui(POSES[sess.pi[poseI]],'',GM.on?[]:[['Done',nextPose,1]]);hint(GM.on?'':'SPACE · CLICK · TAP — CONTINUE')}
+function nextPose(){if(state!=='POSE')return;while(sess.fr.length<3)sess.fr.push(snap());
+ const cube={c:poseI,f:sess.fr.slice(),k:kOf(sess.fr)};sess.tasks.push(cube);
+ const m=mkCube(cube);m.userData.to=slots[poseI].position.clone();m.userData.from=new THREE.Vector3(0,8,6);m.userData.at=now();m.scale.setScalar(.001);stage.add(m);taskMs.push(m);
+ poseI++;poseT=0;sess.fr=[];
+ if(poseI>=NT){state='PAUSE';$('bar').style.width=0;ui('FIVE MOMENTS\nTAKEN SHAPE.','');hint('');setTimeout(()=>{if(state==='PAUSE')place()},2200)}else showPose()}
+function ghostCol(){const g=new THREE.Group(),col=new THREE.Group();sess.tasks.forEach((t,i)=>{const m=mkCube(t);m.position.y=.5+i*1.0;col.add(m)});sess.pre.forEach((t,i)=>{const m=mkCube(t);m.position.set(1.15*(1+(i/5|0)),.5+i%5,0);col.add(m)});g.add(col);
+ const mk=new THREE.Mesh(new THREE.PlaneGeometry(.96,.96).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.5}));mk.position.y=.03;g.add(mk);g.userData={col,mk};return g}
+function preCubes(){const o=[];for(let i=0;i<sess.bg.length&&o.length<45;i+=3){const f=sess.bg.slice(i,i+3);while(f.length<3)f.push(f[f.length-1]);o.push({c:o.length%7,f,k:0,pre:1})}return o}
+function place(){state='PLACE';sync();sess.pre=preCubes();clearStage();stage.visible=false;cityVis(true);[sess.gx,sess.gz]=free();ghost=ghostCol();scene.add(ghost);
+ lastP=null;goal.el=1.05;goal.d=42;goal.t.set(sess.gx+.5,0,sess.gz+.5);goal.az=.6;
+ ui('PLACE THEM\nIN THE CITY.','LEFT: the five cubes you agreed to'+(sess.consent?'':' (stand-ins)')+'. RIGHT: '+sess.pre.length+' more, taken since we recognised you. (Generated frames.)',[['Place here',confirmPlace]]);hint(GM.on?'HAND TO THE EDGE — TRAVEL\nHOLD STILL — PLACE':'MOUSE TO THE EDGE — TRAVEL\nCLICK / ENTER — PLACE')}
+function mv(dx,dz){sess.gx=Math.max(-N,Math.min(N-1,sess.gx+dx));sess.gz=Math.max(-N,Math.min(N-1,sess.gz+dz));goal.t.x=sess.gx+.5;goal.t.z=sess.gz+.5}
+function hex(){return Array.from({length:6},()=>'0123456789ABCDEF'[Math.random()*16|0]).join('')}
+const extraCube=()=>({c:rs()%7,f:[fr(8),fr(8)],k:0});
+function confirmPlace(){if(state!=='PLACE'||!valid(sess.gx,sess.gz))return;
+ const cubes=sess.tasks.concat(sess.pre||[],Array.from({length:8},extraCube)),seed=rs();
+ const rec={id:hex(),seed,layout:layout(cubes,sess.gx,sess.gz,seed,occ()),sim:false,consent:sess.consent,del:false,t:Date.now(),tasks:(sess.pi||[]).map(i=>POSES[i].replace('.',''))};
+ sess.rec=rec;city.push(rec);putRec(rec);scene.remove(ghost);ghost=null;addB(rec,0,now());rebuildLinks();state='GROW';
+ const a=anchor(rec);goal.t.set(a.x,floorsOf(rec)/2,a.z);goal.d=Math.max(26,floorsOf(rec)*2.4);goal.el=.4;ui('EVERYTHING ELSE\nPILES ON.');hint('');
+ setTimeout(()=>{if(state==='GROW')cityMode(rec)},Math.min(rec.layout.length*140,4500)+1500)}
+function delState(){state='DELETE';ui('','');hint('');note('<button class="dim" id="sk" style="margin:0">Skip → city</button>');$('sk').onclick=cityMode}
+let t0=performance.now()/1e3;const now=()=>performance.now()/1e3-t0;
+function askDelete(){state='DLG';$('x').style.display='none';note('');ui('DELETE\nYOUR DATA?','',[['Yes, delete.',reject],['Cancel',()=>{state='CITY';cityUI()},1]])}
+function extend(rec,k){const from=rec.layout.length,top=floorsOf(rec)-1,cs=rec.layout.filter(c=>c.f===top);let f=top+1,i=0;for(let j=0;j<k;j++){const c=cs[i%cs.length];rec.layout.push({x:c.x,z:c.z,f,k:extraCube()});if(++i%cs.length===0)f++}return from}
+function reject(){const r=sess.rec;r.del=true;const from=extend(r,6);putRec(r);addB(r,from,now());rebuildLinks();state='REJECT';
+ ui("YOU CAN'T ACCESS YOUR DATA ANYMORE.\nIT BELONGS TO US NOW.",'',[['See the city',cityMode]]);
+ note('Fiction. <button class="dim" id="er" style="margin:0 0 0 1em">Erase my photos</button>');
+ $('er').onclick=()=>{r.layout.forEach(c=>{if(c.k.k){c.k.f.forEach(f=>{if(typeof f==='string')idbDel(photoKey(f))});c.k.f=c.k.f.map(()=>fr(8));c.k.k=0}});r.erased=true;putRec(r);addB(r,r.layout.length,now());note('Erased.')}}
+function cityUI(){ui('THE CITY.','',[['New participant',()=>{reset()},1]]);hint('DRAG ORBIT · RIGHT-DRAG PAN · SCROLL ZOOM\nWASD MOVE · Q E TURN · DOUBLE-CLICK GO')}
+function cityMode(rec){state='CITY';sel=null;note('');cityVis(true);$('insp').style.display='none';const r=rec||(sess&&sess.rec),a=r&&B[r.id]?anchor(r):null;goal.d=a?36:80;goal.el=.6;goal.t.set(a?a.x:0,2,a?a.z:0);cityUI()}
+function inspect(id,k){const r=B[id].rec;sel=id;const a=anchor(r);goal.t.set(a.x,floorsOf(r)/2,a.z);goal.d=Math.max(16,floorsOf(r)*2.2);goal.el=.4;
+ const ln=city.filter(o=>o.id!==id).sort((p,q)=>d2(r,p)-d2(r,q)).slice(0,2).map(o=>o.id);
+ const cs=r.layout.filter(c=>c.k.k).reduce((a,c)=>a+c.k.f.length,0),un=r.layout.filter(c=>!c.k.k).reduce((a,c)=>a+c.k.f.length,0),pr=r.layout.filter(c=>c.k.pre).reduce((a,c)=>a+c.k.f.length,0);
+ const th=k?k.f.map(s=>typeof s==='number'?'<img src="'+synth(s,k.k).toDataURL()+'">':s.startsWith('idb:')?'<img data-k="'+s.slice(4)+'">':'<img src="'+s+'">').join(''):'';
+ $('insp').innerHTML='<b>'+r.id+'</b><br>CONSENT <b>'+cs+'</b> · NONE <b>'+un+'</b> · BEFORE ASKING <b>'+pr+'</b>'+(k?'<br>'+(k.pre?tagOf(k.f[0])+' · ':'')+(k.k?'CONSENTED':'NO CONSENT')+'<br>'+th:'')+(r.del?'<br>DELETION REJECTED':'')+'<br><button class=\"dim\" id=\"bk\" style=\"margin:1vh 0 0\">← Back</button>';
+ $('insp').style.display='block';$('insp').querySelectorAll('img[data-k]').forEach(im=>idbGet(im.dataset.k).then(u=>{if(u)im.src=u}));$('bk').onclick=e=>{e.stopPropagation();$('insp').style.display='none';sel=null;goal.d=Math.max(goal.d,34);goal.el=.6};$('insp').style.pointerEvents='auto'}
+// ---- input ----
+const ray=new THREE.Raycaster(),mp=new THREE.Vector2(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+function pick(e){mp.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mp,camera)}
+function groundCell(){const v=new THREE.Vector3();if(ray.ray.intersectPlane(plane,v)){sess.gx=Math.max(-N,Math.min(N-1,Math.floor(v.x)));sess.gz=Math.max(-N,Math.min(N-1,Math.floor(v.z)))}}
+let drag=null,lastP=null;
+function poke(){last=performance.now()/1e3}
+const ptrs=new Map(),held=new Set(),cl=v=>Math.max(-N-6,Math.min(N+6,v));let pinch=0,tapT=0,tapX=0,tapY=0;
+const pdist=()=>{const[a,b]=[...ptrs.values()];return Math.hypot(a.x-b.x,a.y-b.y)||1};
+function panBy(dx,dy){const sc=goal.d*.89/innerHeight,rx=Math.cos(goal.az),rz=-Math.sin(goal.az),fx=-Math.sin(goal.az),fz=-Math.cos(goal.az);goal.t.x=cl(goal.t.x-rx*dx*sc+fx*dy*sc);goal.t.z=cl(goal.t.z-rz*dx*sc+fz*dy*sc)}
+R.domElement.addEventListener('pointerdown',e=>{poke();ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});drag={x:e.clientX,y:e.clientY,m:0,btn:e.button,sh:e.shiftKey};if(ptrs.size===2){pinch=pdist();drag.m=99}if(state==='ATTRACT')ask()});
+addEventListener('pointermove',e=>{poke();const p=ptrs.get(e.pointerId);
+ if(p){const ox=p.x,oy=p.y;p.x=e.clientX;p.y=e.clientY;
+  if(state==='CITY'){
+   if(ptrs.size>=2){const nd=pdist();goal.d=Math.max(3,Math.min(170,goal.d*pinch/nd));pinch=nd;panBy((e.clientX-ox)/2,(e.clientY-oy)/2);if(drag)drag.m=99}
+   else if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.m+=Math.abs(dx)+Math.abs(dy);if(drag.btn===2||drag.sh||(e.buttons&2))panBy(dx,dy);else{goal.az-=dx*.006;goal.el=Math.max(.06,Math.min(1.5,goal.el+dy*.004))}drag.x=e.clientX;drag.y=e.clientY}}}
+ if(p&&state==='PLACE'&&e.pointerType!=='mouse'&&drag&&ptrs.size===1){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.m+=Math.abs(dx)+Math.abs(dy);panBy(dx,dy);drag.x=e.clientX;drag.y=e.clientY}
+ if(state==='PLACE'&&e.pointerType==='mouse'){lastP={x:e.clientX,y:e.clientY};pick(e);groundCell()}});
+addEventListener('pointerup',e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=0;const was=drag;drag=null;if(!was||e.target!==R.domElement)return;pick(e);
+ if(state==='PLACE'){if(e.pointerType==='mouse'||was.m<8)groundCell();if(e.pointerType==='mouse')confirmPlace()}
+ else if(state==='POSE')nextPose();
+ else if(state==='CITY'&&was.m<6&&was.btn===0&&!was.sh){const h=ray.intersectObjects(Object.values(B).flatMap(b=>b.g.userData.ms),false)[0];
+  if(h)inspect(h.object.userData.bid,h.object.userData.k);
+  else{const tt=performance.now(),v=new THREE.Vector3();// double-click / double-tap the ground to fly there
+   if(tt-tapT<400&&Math.hypot(e.clientX-tapX,e.clientY-tapY)<30&&ray.ray.intersectPlane(plane,v)){goal.t.set(cl(v.x),1.5,cl(v.z));goal.d=Math.min(goal.d,24)}
+   tapT=tt;tapX=e.clientX;tapY=e.clientY}}});
+addEventListener('pointercancel',e=>{ptrs.delete(e.pointerId);drag=null;pinch=0});
+addEventListener('keyup',e=>held.delete(e.key.toLowerCase()));addEventListener('blur',()=>held.clear());
+R.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+addEventListener('wheel',e=>{poke();if(state==='CITY')goal.d=Math.max(3,Math.min(170,goal.d*Math.exp(e.deltaY*.001)));else if(state==='PLACE')goal.d=Math.max(8,Math.min(80,goal.d+e.deltaY*.03))},{passive:true});
+addEventListener('keydown',e=>{poke();const k=e.key.toLowerCase();held.add(k);
+ if(k==='g'){GM.on?gestureOff():gestureOn();return}
+ if(state==='ATTRACT'&&k!=='a'&&k!=='f'){ask();return}
+ if(k==='r'&&state!=='PLACE'){reset();return}
+ if(k==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();return}
+ if(k==='h'){hintsOn=!hintsOn;hint(hintTxt);return}
+ if(k==='a'&&state!=='PLACE'&&state!=='CITY'){status();const a=$('adm');a.style.display=a.style.display==='block'?'none':'block';return}
+ if(state==='POSE'&&(k===' '||k==='enter'))nextPose();
+ if(state==='PLACE'){if(k==='arrowleft'||k==='a')mv(-1,0);if(k==='arrowright'||k==='d')mv(1,0);if(k==='arrowup'||k==='w')mv(0,-1);if(k==='arrowdown'||k==='s')mv(0,1);if(k==='enter'||k===' ')confirmPlace()}
+ if(state==='DELETE'&&k==='enter')askDelete();
+ if((state==='CITY'||state==='REJECT')&&k==='escape'){$('insp').style.display='none';sel=null;goal.d=80;goal.t.set(0,2,0)}});
+$('x').onclick=e=>{e.stopPropagation();askDelete()};
+$('aClr').onclick=()=>{if(confirm(Remote?'Clear the copy on THIS device, including photos taken here? The shared city online is not touched.':'Clear ALL exhibition data (including saved photos)?')){idbClear().then(()=>{Store.save([]);setPending([]);location.reload()})}};
+$('aFs').onclick=()=>document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();
+$('aHint').onclick=()=>{hintsOn=!hintsOn;hint(hintTxt)};
+addEventListener('resize',()=>{R.setPixelRatio(PR());R.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix()});
+// ---- gesture mode (press G, or open with ?gesture): the camera feed moves a cursor. Hand tracking loads when online; otherwise motion tracking is used.
+// A tap = pinch (hand tracking) or holding still on a target. The feed is only analysed live; nothing from it is saved unless the visitor says YES. ----
+const GM={on:false,act:false,v:null,stream:null,lm:null,c:null,cx:innerWidth/2,cy:innerHeight/2,hx:.5,hy:.5,hv:-9,hp:false,hl:0,mt:0,prev:null,key:null,hold:0,cool:0,pin:false,pres:0};
+async function loadHands(){const B='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14',m=await import(B+'/vision_bundle.mjs'),fs=await m.FilesetResolver.forVisionTasks(B+'/wasm');
+ return m.HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'},runningMode:'VIDEO',numHands:1})}
+async function gestureOn(){if(GM.on)return;try{GM.stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}})}catch(e){GM.stream=null;note('Camera unavailable.');return}
+ const v=document.createElement('video');v.muted=true;v.playsInline=true;v.srcObject=GM.stream;try{await v.play()}catch(e){}GM.v=v;GM.on=true;GM.prev=null;GM.hv=-9;
+ const cv=document.createElement('canvas');cv.width=64;cv.height=48;GM.c=cv.getContext('2d',{willReadFrequently:true});$('gc').style.display='block';
+ loadHands().then(l=>{GM.lm=l}).catch(()=>{});if(state==='ATTRACT')reset()}
+function gestureOff(){if(!GM.on)return;if(stream===GM.stream){stream=null;$('cam').style.display='none'}GM.stream&&GM.stream.getTracks().forEach(t=>t.stop());GM.stream=null;GM.on=false;GM.act=false;GM.lm=null;$('gc').style.display='none';if(state==='ATTRACT')reset()}
+function gestureStep(dt,tn){const g=$('gc');if(!GM.on||!GM.v||GM.v.readyState<2){GM.act=false;return}
+ if(GM.lm){if(tn-GM.hl>.045){GM.hl=tn;try{const r=GM.lm.detectForVideo(GM.v,performance.now()),L=r.landmarks&&r.landmarks[0];if(L){GM.hx=1-L[8].x;GM.hy=L[8].y;GM.hv=tn;GM.hp=Math.hypot(L[4].x-L[8].x,L[4].y-L[8].y)<.06}}catch(e){GM.lm=null}}}
+ else if(tn-GM.mt>.066){GM.mt=tn;const c=GM.c;c.save();c.scale(-1,1);c.drawImage(GM.v,-64,0,64,48);c.restore();const d=c.getImageData(0,0,64,48).data,gr=new Uint8Array(3072),pts=[];
+  for(let i=0;i<3072;i++){gr[i]=(d[i*4]+d[i*4+1]+d[i*4+2])/3;if(GM.prev&&Math.abs(gr[i]-GM.prev[i])>28)pts.push(i)}GM.prev=gr;
+  if(pts.length>14){const top=pts.slice(0,Math.max(8,pts.length>>2));let sx=0,sy=0;top.forEach(i=>{sx+=i%64;sy+=(i/64)|0});GM.hx=sx/top.length/64;GM.hy=sy/top.length/48;GM.hv=tn}}// motion mode: the highest moving part of the body is treated as the hand
+ const fresh=tn-GM.hv<.35,live=GM.lm?fresh:tn-GM.hv<3;GM.act=live;if(fresh)poke();
+ if(state==='ATTRACT'){GM.pres=fresh?GM.pres+dt:0;if(GM.pres>.7){GM.pres=0;ask()}}// someone is in front of the screen = recognised
+ if(live){const nx=Math.max(0,Math.min(1,(GM.hx-.12)/.76)),ny=Math.max(0,Math.min(1,(GM.hy-.08)/.7)),k=1-Math.exp(-dt*(GM.lm?14:7));GM.cx+=(nx*innerWidth-GM.cx)*k;GM.cy+=(ny*innerHeight-GM.cy)*k}
+ const show=live&&['ASK','PLACE','CITY','REJECT','DLG','DELETE'].includes(state);g.style.opacity=show?1:0;g.style.transform='translate('+GM.cx+'px,'+GM.cy+'px)';
+ if(!show){GM.key=null;GM.hold=0;GM.pin=false;return}
+ let key=null,fire=null,thr=1.3;const el=document.elementFromPoint(GM.cx,GM.cy),bt=el&&el.closest&&el.closest('button,#x');
+ if(bt&&!bt.closest('#note')&&bt.offsetParent!==null){key='b:'+(bt.textContent||bt.id);fire=()=>bt.click()}
+ else if(state==='PLACE'){pick({clientX:GM.cx,clientY:GM.cy});groundCell();if(valid(sess.gx,sess.gz)){key='p:'+sess.gx+','+sess.gz;fire=confirmPlace;thr=1.8}}
+ else if(state==='CITY'){pick({clientX:GM.cx,clientY:GM.cy});const h=ray.intersectObjects(Object.values(B).flatMap(b=>b.g.userData.ms),false)[0];
+  if(h){key='h:'+h.object.userData.bid;fire=()=>inspect(h.object.userData.bid,h.object.userData.k)}
+  else{const v=new THREE.Vector3();if(ray.ray.intersectPlane(plane,v)){key='g:'+Math.round(v.x/3)+','+Math.round(v.z/3);fire=()=>{goal.t.set(cl(v.x),1.5,cl(v.z));goal.d=Math.min(goal.d,24)}}}// hold still on empty ground = fly there
+  const ex=(GM.cx/innerWidth-.5)*2;if(Math.abs(ex)>.78)goal.az+=Math.sign(ex)*dt*.8}// hand at the left/right edge = orbit
+ const pin=GM.lm&&GM.hp&&fresh;
+ if(tn<GM.cool||!key){GM.key=key;GM.hold=0}
+ else{if(key!==GM.key){GM.key=key;GM.hold=0}else GM.hold+=dt;if(GM.hold>=thr||(pin&&!GM.pin)){GM.hold=0;GM.cool=tn+1.4;fire&&fire()}}
+ GM.pin=!!pin;g.firstChild.style.transform='scale('+Math.min(1,GM.hold/thr)+')'}
+// ---- simulated background surveillance ticker (labelled, synthetic) ----
+setInterval(()=>{if(state==='ATTRACT'&&Math.random()<.6)return;const s=document.createElement('span'),left=Math.random()<.5;
+ s.textContent='SIM FRM '+String(Math.random()*99999|0).padStart(5,'0')+' · ID '+hex()+' · RETAINED';s.style[left?'left':'right']='2vw';s.style.top=(5+Math.random()*88)+'vh';$('tick').appendChild(s);setTimeout(()=>s.remove(),4600)},900);
+// ---- seed city: simulated people (generated imagery only) ----
+function seedCity(){const r=rng(11);for(let i=0;i<16;i++){const m=10+(r()*14|0),cons=r()<.4,cubes=[],np=4+(r()*8|0),off=cons?5:0;
+ for(let j=0;j<m;j++){const pr=j>=off&&j<off+np;cubes.push(cons&&j<5?{c:r()*7|0,f:[frR(r,3+j),frR(r,3+j)],k:1}:pr?{c:r()*7|0,f:[frR(r,j==off?0:1+(r()*2|0)),frR(r,1+(r()*2|0)),frR(r,2)],k:0,pre:1}:{c:r()*7|0,f:[frR(r,8),frR(r,8)],k:0})}
+ const R2=Math.floor(N*.55);let gx=(r()*2*R2-R2)|0,gz=(r()*2*R2-R2)|0;if(!valid(gx,gz))[gx,gz]=free();const seed=r()*1e9|0;
+ city.push({id:'SIM'+String(i).padStart(2,'0'),seed,layout:layout(cubes,gx,gz,seed,occ()),sim:true,consent:cons,del:r()<.6,t:Date.UTC(2025,0,1)+i*36e5,tasks:[]})}Store.save(city)}
+if(!city.length&&!Remote)seedCity();
+city.forEach(r=>addB(r));rebuildLinks();
+reset();if(/[?&]gesture/.test(location.search))gestureOn();
+status();sync();setInterval(()=>{if(document.visibilityState==='visible'&&state!=='PLACE'&&state!=='GROW')sync()},15000);addEventListener('online',()=>sync());
+let pt=performance.now()/1e3;
+function loop(){requestAnimationFrame(loop);const tn=performance.now()/1e3,dt=Math.min(.05,tn-pt);pt=tn;const n=now();
+ if(sess&&(state==='ASK'||state==='POSE'||state==='PAUSE')){if(state==='ASK')sess.askT+=dt;bgAcc+=dt;while(bgAcc>=.33){bgAcc-=.33;if(sess.bg.length<135)sess.bg.push(fr(state==='ASK'?(sess.askT<4?1:2):state==='POSE'?3+poseI:7))}}
+ gestureStep(dt,tn);
+ if(state==='ATTRACT'||state==='ASK'){goal.az+=dt*.05;const i=Math.floor(tn/4)%3;if(state==='ATTRACT'&&$('t').textContent!==ATT[i])ui(ATT[i])}
+ if(state==='CITY'&&held.size){const sp=(held.has('shift')?2.2:1)*goal.d*.9*dt,fx=-Math.sin(goal.az),fz=-Math.cos(goal.az),rx=Math.cos(goal.az),rz=-Math.sin(goal.az);let mx=0,mz=0;
+  if(held.has('w')||held.has('arrowup')){mx+=fx;mz+=fz}if(held.has('s')||held.has('arrowdown')){mx-=fx;mz-=fz}if(held.has('d')||held.has('arrowright')){mx+=rx;mz+=rz}if(held.has('a')||held.has('arrowleft')){mx-=rx;mz-=rz}
+  goal.t.x=cl(goal.t.x+mx*sp);goal.t.z=cl(goal.t.z+mz*sp);if(held.has('q'))goal.az-=dt*1.2;if(held.has('e'))goal.az+=dt*1.2;
+  if(held.has('=')||held.has('+'))goal.d=Math.max(3,goal.d*(1-dt*1.2));if(held.has('-'))goal.d=Math.min(170,goal.d*(1+dt*1.2))}
+ empty.rotation.y=tn*.35;emptyF.material.opacity=.7+Math.sin(tn*1.6)*.25;emptyL.intensity=.5+Math.sin(tn*1.6)*.3;
+ if(state==='POSE'){poseT+=dt;$('bar').style.width=Math.min(100,poseT/POSE_END*100)+'%';
+  if(sess.fr.length<3&&poseT>=SNAP_AT[sess.fr.length])sess.fr.push(snap());
+  slots.forEach((s,i)=>s.material.opacity=i===poseI?.5+Math.sin(tn*5)*.3:.25);
+  $('s').textContent=(poseI+1)+' / '+NT+(poseT<SNAP_AT[0]?'  ·  '+Math.ceil(SNAP_AT[0]-poseT):(sess.real?'  ·  ● REC':''));if(poseT>POSE_END)nextPose()}
+ taskMs.forEach((m,i)=>{const p=Math.max(0,Math.min(1,(n-m.userData.at)/.9)),e=1-Math.pow(1-p,3);m.position.lerpVectors(m.userData.from,m.userData.to,e);m.scale.setScalar(2.2*Math.max(e,.001));m.rotation.y=(1-e)*6+Math.sin(tn+i)*.1});
+ if(state==='PLACE'){const q=GM.on?(GM.act?{x:GM.cx,y:GM.cy}:null):lastP;if(q){const el=document.elementFromPoint(q.x,q.y);if(!(el&&el.closest&&el.closest('button'))){const f=(v,t)=>Math.abs(v)>t?Math.sign(v)*(Math.abs(v)-t)/(1-t):0,sx=f((q.x/innerWidth-.5)*2,.72),sy=f((q.y/innerHeight-.5)*2,.8);if(sx||sy){panBy(-sx*dt*600,-sy*dt*600);pick({clientX:q.x,clientY:q.y});groundCell()}}}}
+ if(state==='PLACE'&&ghost){const ok=valid(sess.gx,sess.gz);ghost.position.set(sess.gx+.5,0,sess.gz+.5);ghost.userData.col.position.y=.5+Math.sin(tn*2)*.12;ghost.userData.col.rotation.y=Math.sin(tn*.7)*.4;ghost.userData.mk.material.color.set(ok?0xffffff:0xff2a1a)}
+ Object.values(B).forEach(b=>{if(n<b.g.userData.until+1){b.g.userData.ms.forEach(m=>{const p=Math.max(0,Math.min(1,(n-m.userData.at)/.7)),e=1-Math.pow(1-p,3);m.visible=p>0;m.scale.setScalar(Math.max(e,.001));m.position.y=m.userData.fy+(1-e)*5})}});
+ if(pulses.length){const pos=links.children[links.children.length-1].geometry.attributes.position;pulses.forEach((p,i)=>{p.t=(p.t+dt*p.v)%1;const v=p.cv.getPoint(p.t);pos.setXYZ(i,v.x,v.y,v.z)});pos.needsUpdate=true}
+ {const x=$('x');if((state==='DELETE'||state==='CITY')&&sess&&sess.rec&&!sess.rec.del){const a=anchor(sess.rec);a.y=floorsOf(sess.rec)+1.2;a.project(camera);if(a.z<1&&Math.abs(a.x)<1.05&&Math.abs(a.y)<1.05){x.style.display='block';x.style.left=(a.x*.5+.5)*innerWidth+'px';x.style.top=(-a.y*.5+.5)*innerHeight+'px'}else x.style.display='none'}else if(state!=='DLG')x.style.display='none'}
+ if(state==='POSE'||state==='PAUSE'||state==='GROW')poke();// tasks run on their own clock; only walk-aways time out
+ if(state!=='ATTRACT'&&tn-last>120)reset();
+ stepCam(dt);R.render(scene,camera)}
+loop();
+</script></body></html>
